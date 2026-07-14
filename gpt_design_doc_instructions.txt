@@ -1,0 +1,527 @@
+# Satisfactory UEVR Enhancements Input Initialization Investigation
+
+## Purpose
+
+This document is the compact handoff and execution brief for diagnosing and
+patching Quest 2 controller input initialization in the Satisfactory mod
+"UEVR Enhancements". It supersedes the verbose environment-setup discussion.
+
+The development environment is now operational. Continue from the preservation,
+source matching, baseline build, and diagnostic stages. Do not repeat completed
+software-installation work unless a concrete build error requires it.
+
+## Goal
+
+Fix the handoff between the active UEVR Lua profile and the game-side UEVR
+Enhancements bridge so that:
+
+1. Lua initialization completes without an FString argument error.
+2. The bridge performs its complete native initialization, including the
+   UEVRBridgeInitialised event broadcast.
+3. Quest 2 controller buttons, triggers, and sticks work consistently.
+4. Left-stick movement is centered and normal.
+5. Right-stick turning is normal.
+6. HMD or controller pose changes do not create locomotion or circular movement.
+7. The result works after two consecutive complete game/UEVR restarts.
+
+Removal of the Lua exception alone is not success.
+
+## Safety Constraints
+
+- Do not modify or inspect Satisfactory save contents beyond selecting a safe,
+  repeatable runtime test state.
+- Do not replace or patch game executables or game DLLs.
+- Do not disable security software globally.
+- Do not install unofficial fixes.
+- Do not publish packages, push branches, open pull requests, or upload files.
+- Do not overwrite the normal SMM profile with an unproven build.
+- Do not use UEVR Enhancements stable 1.0.4 with Satisfactory 1.2.
+- Do not assume repository master matches the installed alpha package.
+- Do not treat direct reflected property assignment as a final fix.
+- Preserve UEVRBridgeInitialised.Broadcast() in every valid initialization path.
+- Change one diagnostic variable at a time.
+- Create backups and a Git branch before source modifications.
+- Preserve unrelated user changes and never use destructive Git commands.
+
+## Confirmed Environment
+
+### Operating system and storage
+
+- Windows x64, OS build 26200.
+- C: has ample free space for engine and build products (approximately 260 GB
+  at the last check).
+
+### Game and mod runtime
+
+- Steam Satisfactory install:
+  C:\Program Files (x86)\Steam\steamapps\common\Satisfactory
+- Steam app ID: 526870.
+- Last recorded Steam build ID: 23855724.
+- Shipping process:
+  FactoryGameSteam-Win64-Shipping.exe
+- Satisfactory Mod Manager version: 3.1.0.
+- Installed SML version: 3.12.0.
+- Installed UEVR Enhancements version: 1.2.0-alpha3.
+- SteamVR and Quest Steam Link are installed and have rendered the game in the
+  Quest 2 successfully.
+
+### Development environment
+
+- Git for Windows 2.55.0 is available on PATH.
+- Visual Studio Community 2022 17.14 is installed.
+- Required .NET Desktop, Desktop C++, and Game Development C++ workloads are
+  installed.
+- MSVC v143 is installed; the available compiler was MSVC 14.44 / cl 19.44.
+  The Starter Project and custom editor build successfully with it. Do not add
+  MSVC 14.38 unless a real toolchain error demonstrates that it is necessary.
+- .NET 8 runtime and .NET Framework 4.8.1 SDK are installed.
+- Windows SDK 10.0.26100.0 is installed.
+- Custom Satisfactory Unreal Engine:
+  C:\Program Files\Unreal Engine - CSS
+- Registered engine association: 5.6.1-CSS.
+- Engine build reports 5.6.1-CSS-CL-83.
+- Wwise Authoring 2023.1.14.8770:
+  C:\Audiokinetic\Wwise_2023.1.14.8770\Authoring\x64\Release\bin\Wwise.exe
+- WwiseConsole exists beside Wwise.exe.
+- Starter Project:
+  C:\Dev\SatisfactoryModLoader
+- Starter Project EngineAssociation is 5.6.1-CSS.
+- Integrated Wwise Unreal plugin version is 2023.1.14.8770.3555.
+- The user followed the official guide and generated sound banks for all
+  configured platforms.
+- The custom UE editor opens and the Starter Project builds successfully.
+
+The environment is accepted as ready. Do not restart environment setup.
+
+## Installed Package and Profile Inventory
+
+### Installed alpha3 mod
+
+Directory:
+
+  C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Mods\UEVREnhancements
+
+Installed metadata:
+
+- VersionName/SemVersion: 1.2.0-alpha3
+- SML dependency: ^3.12.0
+- GameVersion: >=491125
+- RequiredOnRemote: false
+
+Original SMM cache package:
+
+  C:\Users\chris\AppData\Local\ficsit\downloadCache\UEVREnhancements_1.2.0-alpha3_Windows.zip
+
+Package SHA-256:
+
+  0C5F13B982DBDD1466E0548BC3FB569083D32BE6E02FC5C9F21096FDB3143026
+
+An older 1.0.4 package is also in the SMM cache. It is incompatible with the
+current Satisfactory 1.2 setup and must not be used for runtime testing.
+
+### Active UEVR profile
+
+Profile directory:
+
+  C:\Users\chris\AppData\Roaming\UnrealVRMod\FactoryGameSteam-Win64-Shipping
+
+Only one UEVREnhancements.lua was found during the broad filesystem inventory:
+
+  C:\Users\chris\AppData\Roaming\UnrealVRMod\FactoryGameSteam-Win64-Shipping\scripts\UEVREnhancements.lua
+
+UEVR logs explicitly show this path being executed, so it is the active copy.
+It declares:
+
+  local uevr_profile_version = 'v1.0.1-1'
+
+IMPORTANT CURRENT STATE: this active Lua file was previously edited by the user
+to replace InitUEVRBridge with direct assignments similar to:
+
+  uevr_bridge.ProfileVersion = "v1.0.1-1"
+  uevr_bridge.APIVersion = "1.5.186"
+  uevr_bridge.IsInitialised = true
+
+This was a diagnostic bypass. It does not broadcast UEVRBridgeInitialised and
+must not be retained as the baseline or final fix. Back it up, then restore the
+profile's original InitUEVRBridge call before baseline reproduction.
+
+### Logs
+
+- UEVR profile log:
+  C:\Users\chris\AppData\Roaming\UnrealVRMod\FactoryGameSteam-Win64-Shipping\log.txt
+- Game logs:
+  C:\Users\chris\AppData\Local\FactoryGame\Saved\Logs
+
+The last inspected UEVR log showed plugin API version 2.39.0. This differs from
+the older reported screenshot/version string. Determine the exact injector used
+for each test and record its executable hash rather than relying on labels.
+
+Known injector candidates:
+
+- C:\Users\chris\Downloads\UEVR\UEVRInjector.exe
+- C:\Users\chris\Downloads\uevr-nightly\UEVRInjector.exe
+- C:\Users\chris\Downloads\uevr-nightly-for-satisfactory\UEVRInjector.exe
+
+The latter two were byte-identical at the last check. The first differed.
+
+## Confirmed Runtime Evidence
+
+1. Base UEVR injection works: VR rendering, head tracking, SteamVR detection,
+   and the both-stick-click UEVR menu work.
+2. The active Lua profile loads and finds the object named
+   UEVREnhancements_UEVRBridge.
+3. The object full path in one log belonged to the active FGGameInstance's
+   GameInstanceModuleManager.
+4. DebugLog(FString) succeeds and produces a native game log entry.
+5. InitUEVRBridge(FString, FString) fails from Lua with:
+   Invalid argument type for FString
+6. Dynamic tostring values, direct tostring wrapping, and fixed literals all
+   produced the same error.
+7. Traceback line movement proved that the edited active Lua file was executed.
+8. Direct reflected property assignments bypassed the exception and briefly
+   forwarded some controller input, but behavior was unstable.
+9. Instability included constrained movement, circular locomotion, loss of
+   controller input after restart, and apparent HMD-driven locomotion.
+10. The diagnostic assignments did not reproduce native initialization because
+    they omitted UEVRBridgeInitialised.Broadcast().
+11. A previous log from the bypass state showed raw XInput button changes being
+    received by Lua, so input can reach at least the UEVR/Lua stage.
+12. A previous game log showed MovementMode=1 and RoomscaleMode=true. These may
+    be relevant to circular/HMD locomotion but are not yet established causes.
+
+OpenVR/OpenXR, Nullify VR Plugins, and requested-runtime combinations already
+produced the same FString error. Do not begin by repeating that matrix.
+
+## Existing Native API
+
+The expected checked-in bridge interface includes:
+
+  UFUNCTION(BlueprintCallable)
+  void DebugLog(FString DebugString);
+
+  UFUNCTION(BlueprintCallable)
+  void InitUEVRBridge(FString Profile, FString UEVR);
+
+Expected InitUEVRBridge behavior:
+
+  ProfileVersion = Profile;
+  APIVersion = UEVR;
+  IsInitialised = true;
+  log profile/API versions;
+  if (UEVRBridgeInitialised.IsBound())
+      UEVRBridgeInitialised.Broadcast();
+
+Do not assume the installed reflected metadata exactly matches this header until
+the matching source/package and runtime UFunction metadata have been checked.
+
+## Source Revision Status
+
+Repository:
+
+  https://github.com/dortamur/satisfactory-uevr-enhancements
+
+The current master/tag line is not the Satisfactory 1.2 alpha package.
+
+The strongest current source candidate is:
+
+- Branch: feature/1.2.0-updates
+- Previously observed branch head:
+  e55a23a3bbd561b06254e118388168e30c009c31
+
+At that revision/branch, UEVREnhancements.uplugin reports exactly:
+
+- 1.2.0-alpha3
+- SML ^3.12.0
+- GameVersion >=491125
+
+This makes it the likely matching revision, but it has not yet been proven to
+be the exact package source through an unmodified local build/package comparison.
+Do not state that exact matching is confirmed until repository history,
+timestamps, profile content, and package behavior have been compared.
+
+If history shows that alpha3 spans multiple commits, select the commit that best
+matches the package's July 2026 file timestamps and contents. Record the reason.
+
+## Required Preservation Work
+
+Before modifying source or runtime files:
+
+1. Ensure Satisfactory, UEVR, SteamVR, Steam Link, and SMM are closed. Steam
+   itself may remain open if it is not locking relevant files.
+2. Create a timestamped investigation backup outside the game and profile
+   directories, preferably under C:\Dev.
+3. Back up the complete active UEVR profile directory.
+4. Back up the active modified UEVREnhancements.lua separately.
+5. Back up the cached alpha3 ZIP and record/verify its SHA-256.
+6. Back up the installed UEVREnhancements mod directory.
+7. Copy the current UEVR and game logs as baseline evidence.
+8. Do not back up or modify saves because they are outside this task.
+9. Create investigation-log.md in the source worktree. For every test record:
+   source commit, source diff, Lua hash, native package hash, UEVR executable
+   path/hash/version, runtime, exact test procedure, result, and log excerpts.
+
+## Source Setup
+
+1. Inspect C:\Dev and the Starter Project Git state before cloning or adding
+   anything. Preserve existing user changes.
+2. Clone the mod repository into a separate source location under C:\Dev unless
+   official repository instructions require it to be cloned directly into the
+   Starter Project.
+3. Fetch all branches and tags.
+4. Inspect branch history around feature/1.2.0-updates and alpha3 metadata.
+5. Inspect README, workflows, Build.cs, uplugin metadata, scripts, and official
+   Satisfactory Modding import instructions.
+6. Identify the most likely exact alpha3 commit.
+7. Check out that commit, then create:
+   fix/uevr-bridge-initialization
+8. Determine the supported method for placing/linking the mod under
+   C:\Dev\SatisfactoryModLoader. Do not invent a project layout.
+9. Keep the mod source repository as a Git repository after import. Avoid
+   copying it in a way that loses revision tracking.
+
+## Baseline Build Requirement
+
+Before patching:
+
+1. Build/package the selected alpha3 source unchanged using repository and
+   Starter Project tooling.
+2. Use Alpakit or repository-documented commands; do not invent UAT commands.
+3. Preserve the unmodified local package and record hashes.
+4. Install it only through an isolated SMM/test profile or another reversible,
+   documented test arrangement.
+5. Restore the active Lua script to the original profile call after backing up
+   the user's diagnostic edit.
+6. Confirm the locally built unmodified package reproduces the same reflected
+   FString failure.
+
+If an unmodified local package cannot reproduce the failure, stop patching and
+investigate package/source/profile mismatch first.
+
+## Primary Hypothesis and Alternatives
+
+Primary hypothesis to test:
+
+UEVR's Lua-to-Unreal reflected call layer fails to marshal the two-FString
+InitUEVRBridge signature in this combination of Satisfactory 1.2, SML 3.12,
+UEVR Enhancements alpha3, the active profile, and current UEVR.
+
+Do not treat this as proven. Alternatives include:
+
+- Native mod and Lua profile revision mismatch.
+- Installed runtime reflection metadata differs from source.
+- UEVR regression affecting multiple FString parameters.
+- A reflected parameter has unexpected CPF_OutParm or related flags.
+- Lua resolves a wrapper or wrong/stale bridge class/object.
+- Multiple bridge objects or Lua callback registrations exist.
+- Initialization occurs before player/world readiness or more than once.
+- Missing event listeners or stale movement state causes the post-bypass input
+  behavior independently of FString marshalling.
+
+## Diagnostic Sequence Before Final API Changes
+
+### Runtime reflection verification
+
+Add narrow native diagnostics to report:
+
+- Bridge construction and object full name.
+- Outer, world, game instance, and pointer/address where safe.
+- Full UFunction name for InitUEVRBridge and DebugLog.
+- Parameter count and order.
+- Each FProperty class.
+- CPF_Parm and CPF_OutParm flags.
+- Whether each expected string is FStrProperty.
+- Whether a Blueprint-generated wrapper changes the callable signature.
+
+Confirm DebugLog resolves on the same runtime object/class.
+
+### Marshalling boundary methods
+
+Temporarily add logging-only reflected methods and call them one at a time:
+
+- TestNoArgs()
+- TestOneString(FString A)
+- TestTwoStrings(FString A, FString B)
+- TestStringAndInt(FString A, int32 B)
+- TestTwoNames(FName A, FName B)
+- TestSetProfile(FString A)
+- TestSetApi(FString A)
+
+Record success/failure for every signature. Remove unnecessary diagnostics from
+the final diff.
+
+### No-argument initialization diagnostic
+
+If no-argument reflection works, add a temporary no-argument method that sets
+diagnostic version values, marks initialization, logs, and broadcasts
+UEVRBridgeInitialised. Call only that method from Lua.
+
+Interpretation:
+
+- Stable controls imply the missing native event/path was central.
+- No FString error but unstable controls means initialization listeners/input
+  setup still require investigation.
+- Failure of the no-argument call means the issue is broader than FString.
+- Missing reflected method means the wrong package/class metadata is loaded.
+
+This hardcoded method is diagnostic only and must not be delivered.
+
+## Likely Minimal Final Fix
+
+Only if diagnostics confirm single-FString and no-argument methods work while
+the current two-FString method fails, add a backward-compatible split API using
+the repository's spelling convention:
+
+  UFUNCTION(BlueprintCallable)
+  void SetUEVRProfileVersion(FString Profile);
+
+  UFUNCTION(BlueprintCallable)
+  void SetUEVRAPIVersion(FString UEVRVersion);
+
+  UFUNCTION(BlueprintCallable)
+  void InitialiseUEVRBridge();
+
+Responsibilities:
+
+- SetUEVRProfileVersion assigns ProfileVersion.
+- SetUEVRAPIVersion assigns APIVersion.
+- InitialiseUEVRBridge logs stored values, sets IsInitialised, and broadcasts
+  UEVRBridgeInitialised exactly once per intended lifecycle.
+- Existing InitUEVRBridge remains for backward compatibility and delegates to
+  the same initialization path.
+
+Before imposing a permanent IsInitialised guard, inspect whether reinjection in
+the same process or world transitions intentionally require reinitialization.
+Choose idempotence based on existing lifecycle behavior, not assumption.
+
+Lua should compute a safe dotted API version string, call both single-string
+setters, then call the no-argument initializer. Keep the change minimal.
+
+## Initialization Event Investigation
+
+Search and document every use of:
+
+- UEVRBridgeInitialised
+- InitUEVRBridge
+- IsInitialised
+- InputActionsTick
+- MovementMode
+- RoomscaleMode
+- AimMode
+- UIInteractMode
+- VR_MovementOrientation
+- VR_RoomscaleMovement
+
+For every UEVRBridgeInitialised listener, determine whether it initializes:
+
+- Input actions or Enhanced Input mapping contexts.
+- Player controller/pawn references.
+- Tick activation.
+- Movement orientation or roomscale locomotion.
+- Aim and controller-hand modes.
+- Camera/UI state.
+
+Check ordering, duplicate registration, and initialization before world/player
+readiness. The direct Lua bypass skipped this event and is therefore not useful
+evidence that native initialization itself is bad.
+
+## Input Pipeline Diagnostics
+
+Instrument only as needed and rate-limit logs.
+
+1. UEVR XInput callback: user index, return value, packet, buttons, both stick
+   axes, and triggers. Log changes or sample at a controlled interval.
+2. Lua forwarding calls: buttons, sticks, and triggers passed to the bridge.
+3. Native bridge state: all stored controls and scaled axis values.
+4. InputActionsTick: ticking state, valid indices/actions/listeners, and values
+   constrained to [-1, 1]. Verify rest returns to approximately zero.
+5. Unreal Enhanced Input: mapping context count, target player/controller,
+   trigger phases, and absence of a duplicate constant axis source.
+
+Do not add ResetInputState to the final fix unless logs show stale values or
+disconnect/reinjection state is a cause.
+
+## Circular Movement Investigation
+
+At controller rest, record raw sticks, bridge-scaled sticks, resulting movement
+vector, movement/aim/roomscale/UI modes, HMD pose, and controller poses.
+
+Test independently for:
+
+- Stick drift or stale values.
+- Axis swap/inversion.
+- HMD or controller pose interpreted as movement.
+- Roomscale movement applied twice.
+- Simultaneous XInput and motion-controller mappings.
+- Duplicate Enhanced Input contexts or callbacks.
+- Uninitialized movement mode.
+- More than one bridge object or Lua script instance.
+- World transition selecting a stale bridge.
+
+The active Lua script has last_world and last_level variables that may indicate
+unfinished world-transition handling. Inspect them, but do not broaden the patch
+without evidence.
+
+## Test Environment
+
+Keep the first test environment fixed:
+
+- Quest 2 through Quest Steam Link and SteamVR.
+- OpenVR runtime.
+- Profile's original/default Nullify VR Plugins setting.
+- Clean Steam Satisfactory UEVR profile modified only for the matching native
+  test package.
+- Isolated SMM profile containing only required dependencies and the test mod.
+
+Do not vary runtime, DLL, rendering mode, and source in the same test.
+
+For each native build:
+
+1. Close Satisfactory and confirm no FactoryGame process remains.
+2. Close UEVR.
+3. Start SteamVR and connect Quest Steam Link.
+4. Start the exact recorded UEVR executable.
+5. Launch Satisfactory through the isolated SMM profile.
+6. Reach the same repeatable game state and inject.
+7. Capture complete UEVR and game initialization logs.
+8. Test head tracking and both-stick-click UEVR menu.
+9. Test left stick at rest and in all four directions.
+10. Test right-stick turning, A/B/X/Y, triggers, grips, and recenter.
+11. Stand untouched for at least 30 seconds.
+12. Rotate the HMD without touching controls.
+13. Move each controller without touching sticks.
+14. Exercise a menu/world transition if supported.
+15. Exit completely and repeat from a clean launch.
+
+Success requires two consecutive clean launches with stable controls.
+
+## Deliverables
+
+Maintain enough evidence to produce:
+
+1. Root-cause report separating confirmed facts, likely cause, and uncertainty.
+2. Compact exact environment inventory.
+3. Selected source commit and matching rationale.
+4. Minimal Git diff.
+5. Build/package commands that actually worked.
+6. Generated package paths and SHA-256 hashes.
+7. Reversible isolated installation steps.
+8. Before/after log excerpts.
+9. Test matrix with pass/fail results, including two complete restarts.
+10. Rollback instructions.
+11. Remaining risks: compatibility, reinjection, multiplayer, world transitions,
+    duplicate callbacks, stale bridge objects, and profile/native mismatch.
+
+## Immediate Next Action
+
+Do not edit the game or profile immediately. First:
+
+1. Check running processes and close relevant applications.
+2. Inspect Git status in C:\Dev\SatisfactoryModLoader and preserve user changes.
+3. Create timestamped backups of the profile, alpha3 package, installed mod, and
+   current logs.
+4. Create investigation-log.md.
+5. Clone/fetch the mod repository, identify the exact alpha3 candidate commit,
+   and create fix/uevr-bridge-initialization.
+6. Inspect official import and packaging instructions.
+7. Restore a backed-up test copy of the active Lua script to the original call.
+8. Build and package the unmodified candidate before writing the patch.
